@@ -1,0 +1,223 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudFormation template for CSCI 4145 term project
+
+Parameters:
+  LabRoleArn: 
+    Type: String
+    Description: Existing role for service permission
+
+Resources:
+  # Create VPC
+  ProjectVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: ProjectVPC
+
+  # Create public subnet for frontend
+  FrontendSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProjectVPC
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: FrontendSubnet
+
+  # Create private subnet for backend
+  BackendSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProjectVPC
+      CidrBlock: 10.0.16.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: BackendSubnet
+
+  # Create another private subnet for RDS
+  DBSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ProjectVPC
+      CidrBlock: 10.0.4.0/22
+      Tags:
+        - Key: Name
+          Value: DBSubnet
+
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for RDS instance"
+      SubnetIds:
+        - !Ref BackendSubnet
+        - !Ref DBSubnet
+
+  # Create internet gateway
+  ProjectInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: project-igw
+
+  # Provide internet gateway attachment to the VPC
+  ProjectVPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ProjectVPC
+      InternetGatewayId: !Ref ProjectInternetGateway
+
+  # Create a route table for frontend subnet
+  FrontendRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ProjectVPC
+      Tags:
+        - Key: Name
+          Value: frontend-rt
+
+  # Create associate route to access the Internet
+  FrontendRoute:
+    Type: AWS::EC2::Route
+    DependsOn: ProjectVPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref FrontendRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ProjectInternetGateway
+
+  # Associate route with route table
+  FrontendSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref FrontendSubnet
+      RouteTableId: !Ref FrontendRouteTable
+
+  # Create frontend security group
+  FrontendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Enable SSH and HTTP access via port 22 and 80'
+      VpcId: !Ref ProjectVPC
+      SecurityGroupIngress:
+        - IpProtocol: 'tcp'
+          FromPort: 22
+          ToPort: 22
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: 'tcp'
+          FromPort: 80
+          ToPort: 80
+          CidrIp: '0.0.0.0/0'
+      Tags: 
+        - Key: Name
+          Value: frontend-sg
+  
+  # Create backend EC2 instance 
+  BackendEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: 't2.micro'
+      SecurityGroupIds:
+        - !Ref FrontendSecurityGroup
+      SubnetId: !Ref BackendSubnet
+      ImageId: 'ami-0427090fd1714168b'
+      IamInstanceProfile: LabInstanceProfile
+      KeyName: project-keypair
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update-y
+          yum install -y docker
+          service docker start
+          usermod -a -G docker ec2-user
+          docker pull lamtieu12/project-backend
+          docker run -p 80:8080 lamtieu12/project-backend
+      Tags:
+        - Key: Name
+          Value: backend-ec2
+    
+  # Create frontend EC2 instance
+  FrontendEC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: BackendEC2Instance
+    Properties:
+      InstanceType: 't2.micro'
+      SecurityGroupIds: 
+        - !Ref FrontendSecurityGroup
+      SubnetId: !Ref FrontendSubnet
+      ImageId: 'ami-0427090fd1714168b'
+      IamInstanceProfile: LabInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update-y
+          yum install -y docker
+          service docker start
+          usermod -a -G docker ec2-user
+          docker pull lamtieu12/project-frontend
+          docker run -d -e BACKEND_SERVER_IP=http://${BackendEC2Instance.PublicIp}:80 -p 80:3000 lamtieu12/project-frontend
+      Tags:
+        - Key: Name
+          Value: frontend-ec2
+
+  # Create SNS Topic to send email
+  SnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: ConfirmEmailTopic
+      DisplayName: Pawfect Match
+      Subscription:
+        - Endpoint: "tieunhatlam1210@gmail.com"
+          Protocol: email
+  
+  # Create lambda function to invoke SNS service
+  InvokeSNSLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties: 
+      FunctionName: InvokeSNS
+      Handler: index.handler
+      Role: !Ref LabRoleArn
+      Runtime: nodejs18.x
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref SnsTopic
+      Code:
+        ZipFile: |
+          const aws_sdk = require('aws-sdk');
+          const sns = new aws_sdk.SNS();
+
+          export const handler = async (event) => {
+            const message = event.message;
+            const params = {
+              Message: message,
+              Subject: "Confirmation of Application",
+              TopicArn: process.env.SNS_TOPIC_ARN
+            }
+
+            try {
+              const data = await sns.publish(params).promise();
+              console.log(`Message sent successfully!`);
+            }
+            catch(error) {
+              return {
+                  status: 500,
+                  error: error.message
+              }
+            }
+          }
+
+Outputs:
+  VpcId: 
+    Description: VPC ID
+    Value: !Ref ProjectVPC
+
+  SnsTopicArn: 
+    Description: The ARN of the SNS Topic
+    Value: !Ref SnsTopic
+
+  LambdaFunctionArn:
+    Description: The ARN of lambda function
+    Value: !GetAtt InvokeSNSLambdaFunction.Arn    
