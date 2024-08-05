@@ -9,7 +9,6 @@ function AdoptionForm() {
         ownedPet: false,
         message:''
     });
-    const ip = process.env.BACKEND_SERVER_IP;
 
     const handleChange = (event) => {
         const { name, value } = event.target;
@@ -23,25 +22,25 @@ function AdoptionForm() {
         event.preventDefault();
         console.log('Form data submitted:', formData);
         try {
-            const request = await axios.post(`${ip}/adoption`, formData);
+            const request = await axios.post("http://98.81.23.27:80/adoption", formData);
             console.log(request.data);
         }
         catch(error) {
             alert("Error sending application");
-            console.log("Error sending appication: ", error);
+            console.log("Error sending appication: ", error.response);
         }
         
     };
 
     return (
         <div className="flex flex min-h-full flex-1 flex-col justify-center px-6 py-12 lg:px-8">
-            <div class="sm:mx-auto w-full">
-                <h1 className="mt-10 text-center text-2xl font-bold leading-9 tracking-tight text-gray-900">Adoption Form</h1>
+            <div className="sm:mx-auto w-full">
+                <h1 className="text-center text-2xl font-bold leading-9 tracking-tight text-gray-900">Adoption Form</h1>
                 <p className="mt-5 text-center text-2xl leading-6 tracking-tight">Please fill out the following adoption form to adopt this cutie!</p>
             </div>
             <div className="mt-10 sm:mx-auto sm:w-full max-w-lg">
                 <form className="space-y-6" onSubmit={handleSubmit}>
-                    <div class="flex items-center justify-between gap-3">
+                    <div className="flex items-center justify-between gap-3">
                         <div>
                             <label className="block font-medium leading-6">
                                 First Name:
@@ -97,7 +96,7 @@ function AdoptionForm() {
                             />
                         </label>
                     </div>
-                    <button className="flex w-full justify-center rounded-md bg-blue-600 px-3 py-1.5 text-sm font-semibold leading-6 text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600" type="submit">Submit</button>
+                    <button className="flex w-full justify-center rounded-md bg-gray-800 px-3 py-1.5 text-sm font-semibold leading-6 text-white shadow-sm hover:bg-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600" type="submit">Submit</button>
                 </form>
             </div>
         </div>
