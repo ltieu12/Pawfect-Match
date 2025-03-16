@@ -11,9 +11,12 @@ function CatList() {
     };
 
     useEffect(() => {
-        axios.get("http://localhost:8080/cats").then(response => {
+        axios.get("http://44.204.241.99:80/cats")
+        .then(response => {
             setCats(response.data.cats);
-        }).catch(error => console.error("Error fetching Cats:", error.response));
+            console.log(response.data);
+        })
+        .catch(error => console.error("Error fetching Cats:", error.response));
     }, []);
 
     return (

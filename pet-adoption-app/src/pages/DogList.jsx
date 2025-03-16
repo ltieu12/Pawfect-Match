@@ -11,10 +11,12 @@ function DogList() {
     };
 
     useEffect(() => {
-        axios.get("http://localhost:8080/dogs").then(response => {
+        axios.get("http://44.204.241.99:80/dogs")
+        .then(response => {
             setDogs(response.data.dogs);
             console.log(response.data);
-        }).catch(error => console.error("Error fetching Dogs:", error.response));
+        })
+        .catch(error => console.error("Error fetching Dogs:", error.response));
     }, []);
 
     return (

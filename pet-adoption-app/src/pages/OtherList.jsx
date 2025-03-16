@@ -11,10 +11,12 @@ function OtherList() {
     };
 
     useEffect(() => {
-        axios.get("http://localhost:8080/others").then(response => {
+        axios.get("http://44.204.241.99:80/others")
+        .then(response => {
             setOthers(response.data.others);
             console.log(response.data);
-        }).catch(error => console.error("Error fetching Others:", error.response));
+        })
+        .catch(error => console.error("Error fetching Others:", error.response));
     }, []);
 
     return (
