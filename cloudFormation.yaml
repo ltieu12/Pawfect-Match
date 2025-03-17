@@ -17,7 +17,7 @@ Resources:
           Value: ProjectVPC
 
   # Create public subnet for frontend
-  FrontendSubnet:
+  PublicSubnet:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref ProjectVPC
@@ -25,36 +25,29 @@ Resources:
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: FrontendSubnet
+          Value: PublicSubnet
 
-  # Create private subnet for backend
-  BackendSubnet:
+  # Create 2 private subnets for RDS
+  DBSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref ProjectVPC
+      AvailabilityZone: us-east-1b
       CidrBlock: 10.0.16.0/20
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
-          Value: BackendSubnet
+          Value: DBSubnet-1
 
-  # Create another private subnet for RDS
-  DBSubnet:
+  DBSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref ProjectVPC
+      AvailabilityZone: us-east-1d
       CidrBlock: 10.0.4.0/22
       Tags:
         - Key: Name
-          Value: DBSubnet
-
-  RDSSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Properties:
-      DBSubnetGroupDescription: "Subnet group for RDS instance"
-      SubnetIds:
-        - !Ref BackendSubnet
-        - !Ref DBSubnet
+          Value: DBSubnet-2
 
   # Create internet gateway
   ProjectInternetGateway:
@@ -72,35 +65,35 @@ Resources:
       InternetGatewayId: !Ref ProjectInternetGateway
 
   # Create a route table for frontend subnet
-  FrontendRouteTable:
+  PublicSubnetRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref ProjectVPC
       Tags:
         - Key: Name
-          Value: frontend-rt
+          Value: public-rt
 
   # Create associate route to access the Internet
-  FrontendRoute:
+  PublicRoute:
     Type: AWS::EC2::Route
     DependsOn: ProjectVPCGatewayAttachment
     Properties:
-      RouteTableId: !Ref FrontendRouteTable
+      RouteTableId: !Ref PublicSubnetRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref ProjectInternetGateway
 
   # Associate route with route table
-  FrontendSubnetRouteTableAssociation:
+  PublicRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref FrontendSubnet
-      RouteTableId: !Ref FrontendRouteTable
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicSubnetRouteTable
 
-  # Create frontend security group
-  FrontendSecurityGroup:
+  # Create public security group
+  PublicSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: 'Enable SSH and HTTP access via port 22 and 80'
+      GroupDescription: 'Enable SSH, HTTP and database access to the subnet'
       VpcId: !Ref ProjectVPC
       SecurityGroupIngress:
         - IpProtocol: 'tcp'
@@ -111,18 +104,37 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: '0.0.0.0/0'
+        - IpProtocol: 'tcp'
+          FromPort: 3306 
+          ToPort: 3306
+          CidrIp: '0.0.0.0/0'
       Tags: 
         - Key: Name
-          Value: frontend-sg
+          Value: public-sg
   
+  # Security Group for RDS database
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Allow database access from Private EC2 instance'
+      VpcId: !Ref ProjectVPC
+      SecurityGroupIngress:
+        - IpProtocol: 'tcp'
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref PublicSecurityGroup
+      Tags:
+        - Key: Name
+          Value: DBSecurityGroup
+    
   # Create backend EC2 instance 
   BackendEC2Instance:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: 't2.micro'
       SecurityGroupIds:
-        - !Ref FrontendSecurityGroup
-      SubnetId: !Ref BackendSubnet
+        - !Ref PublicSecurityGroup
+      SubnetId: !Ref PublicSubnet
       ImageId: 'ami-0427090fd1714168b'
       IamInstanceProfile: LabInstanceProfile
       KeyName: project-keypair
@@ -134,7 +146,7 @@ Resources:
           service docker start
           usermod -a -G docker ec2-user
           docker pull lamtieu12/project-backend
-          docker run -p 80:8080 lamtieu12/project-backend
+          docker run -d -p 80:8080 lamtieu12/project-backend
       Tags:
         - Key: Name
           Value: backend-ec2
@@ -146,10 +158,11 @@ Resources:
     Properties:
       InstanceType: 't2.micro'
       SecurityGroupIds: 
-        - !Ref FrontendSecurityGroup
-      SubnetId: !Ref FrontendSubnet
+        - !Ref PublicSecurityGroup
+      SubnetId: !Ref PublicSubnet
       ImageId: 'ami-0427090fd1714168b'
       IamInstanceProfile: LabInstanceProfile
+      KeyName: project-keypair
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
@@ -157,11 +170,58 @@ Resources:
           yum install -y docker
           service docker start
           usermod -a -G docker ec2-user
-          docker pull lamtieu12/project-frontend
-          docker run -d -e BACKEND_SERVER_IP=http://${BackendEC2Instance.PublicIp}:80 -p 80:3000 lamtieu12/project-frontend
       Tags:
         - Key: Name
           Value: frontend-ec2
+
+  # Create RDS subnet group
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for RDS instance"
+      SubnetIds:
+        - !Ref DBSubnet1
+        - !Ref DBSubnet2
+      Tags:
+        - Key: Name
+          Value: rdsSubnetGroup
+    
+  # RDS Instance
+  ProjectDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: projectdb
+      AllocatedStorage: '20'
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      MasterUsername: admin
+      MasterUserPassword: Lam01122002
+      DBName: pet_lists
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+  
+  # Secrets Manager Secret for RDS Credentials
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: db_secret
+      Description: 'RDS database credentials'
+      SecretString: !Sub |
+        {
+          "username": "admin",
+          "password": "Lam01122002",
+          "host": "${ProjectDBInstance.Endpoint.Address}",
+          "port": 3306,
+          "dbname": "pet_lists"
+        }
+
+  SecretRDSInstanceAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+        SecretId: !Ref DBSecret
+        TargetId: !Ref ProjectDBInstance
+        TargetType: AWS::RDS::DBInstance
 
   # Create SNS Topic to send email
   SnsTopic:
@@ -176,48 +236,49 @@ Resources:
   # Create lambda function to invoke SNS service
   InvokeSNSLambdaFunction:
     Type: AWS::Lambda::Function
+    DependsOn: SnsTopic
     Properties: 
       FunctionName: InvokeSNS
       Handler: index.handler
       Role: !Ref LabRoleArn
       Runtime: nodejs18.x
+      Timeout: 900
       Environment:
         Variables:
           SNS_TOPIC_ARN: !Ref SnsTopic
       Code:
-        ZipFile: |
-          const aws_sdk = require('aws-sdk');
-          const sns = new aws_sdk.SNS();
-
-          export const handler = async (event) => {
-            const message = event.message;
-            const params = {
-              Message: message,
-              Subject: "Confirmation of Application",
-              TopicArn: process.env.SNS_TOPIC_ARN
-            }
-
-            try {
-              const data = await sns.publish(params).promise();
-              console.log(`Message sent successfully!`);
-            }
-            catch(error) {
-              return {
-                  status: 500,
-                  error: error.message
-              }
-            }
-          }
+        S3Bucket: project-lambda-func
+        S3Key: lambda.zip
 
 Outputs:
   VpcId: 
     Description: VPC ID
-    Value: !Ref ProjectVPC
+    Value: !Ref ProjectVPC   
 
-  SnsTopicArn: 
-    Description: The ARN of the SNS Topic
+  PublicSubnetId:
+    Description: The public subnet ID
+    Value: !Ref PublicSubnet
+
+  FrontendEC2Id:
+    Description: Instance ID of frontend EC2
+    Value: !Ref FrontendEC2Instance
+  
+  BackendEC2Id:
+    Description: Instance ID of backend EC2
+    Value: !Ref BackendEC2Instance
+  
+  DBSubnetGroup:
+    Description: The Subnet Group for the RDS instance
+    Value: !Ref RDSSubnetGroup
+
+  RDSInstanceId: 
+      Description: RDS Instance ID
+      Value: !Ref ProjectDBInstance
+
+  LambdaFunctionName:
+    Description: Name of the Lambda function
+    Value: !Ref InvokeSNSLambdaFunction
+
+  SNSTopicARN:
+    Description: The ARN of the SNS topic
     Value: !Ref SnsTopic
-
-  LambdaFunctionArn:
-    Description: The ARN of lambda function
-    Value: !GetAtt InvokeSNSLambdaFunction.Arn    

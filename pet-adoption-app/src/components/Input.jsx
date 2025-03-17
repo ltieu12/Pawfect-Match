@@ -33,7 +33,7 @@ function Input({label, type, name, inputRef}) {
             }
             </label>
         </div>
-    )
+    );
 }
 
 export default Input;
