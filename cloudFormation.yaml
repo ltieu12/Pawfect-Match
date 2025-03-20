@@ -93,7 +93,7 @@ Resources:
   PublicSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: 'Enable SSH, HTTP and database access to the subnet'
+      GroupDescription: 'Enable SSH and HTTP access to the subnet'
       VpcId: !Ref ProjectVPC
       SecurityGroupIngress:
         - IpProtocol: 'tcp'
@@ -103,10 +103,6 @@ Resources:
         - IpProtocol: 'tcp'
           FromPort: 80
           ToPort: 80
-          CidrIp: '0.0.0.0/0'
-        - IpProtocol: 'tcp'
-          FromPort: 3306 
-          ToPort: 3306
           CidrIp: '0.0.0.0/0'
       Tags: 
         - Key: Name
